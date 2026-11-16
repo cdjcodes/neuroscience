@@ -106,7 +106,7 @@ def _build_cell(model: dict, bio: dict):
     return sim.MorphologyCell(analyse(model["swc"])["morph"], b)
 
 
-@st.cache_data(max_entries=64, show_spinner="Simulating with NEURON…")
+@st.cache_data(max_entries=16, ttl=3600, show_spinner="Simulating with NEURON…")  # results can be ~8 MB each
 def run_clamp(model: dict, bio: dict, stim: dict, record_dt: float | None):
     cell = _build_cell(model, bio)
     res = cell.run(sim.CurrentClamp(**stim), record_sections_dt=record_dt)

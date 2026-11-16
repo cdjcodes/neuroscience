@@ -1,0 +1,9 @@
+[server]
+headless = true
+maxUploadSize = 20  # MB; SWC files are small
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#d62728"

@@ -1,6 +1,7 @@
 ![](banner.png)
 <!-- PROJECT SHIELDS -->
 ![Python](https://img.shields.io/badge/python-v3.10+-blue.svg)
+[![tests](https://github.com/cdjcodes/neuroscience/actions/workflows/tests.yml/badge.svg)](https://github.com/cdjcodes/neuroscience/actions/workflows/tests.yml)
 ![Dependencies](https://img.shields.io/badge/dependencies-up%20to%20date-brightgreen.svg)
 ![Contributions welcome](https://img.shields.io/badge/contributions-welcome-orange.svg)
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/cdjcodes/neuroscience)
@@ -111,6 +112,16 @@ The app opens at http://localhost:8501 and lets you:
 
 Stimulus and membrane parameters (channel densities, leak, axial resistance, temperature, active dendrites, AIS) are in the sidebar. Results are cached, so revisiting a setting is instant.
 
+### Deploying the app
+
+The repo is ready for [Streamlit Community Cloud](https://streamlit.io/cloud) (free):
+
+1. Sign in at [share.streamlit.io](https://share.streamlit.io) with GitHub and click **Create app → Deploy a public app from GitHub**.
+2. Repository `cdjcodes/neuroscience`, branch `main`, main file `streamlit_app.py`.
+3. Under **Advanced settings**, choose Python **3.12**, then **Deploy**.
+
+Dependencies come from `requirements.txt` and settings from `.streamlit/config.toml`. Downloads and fitted models are cached on the server's disk, which is wiped whenever the app restarts, so they are rebuilt on demand. GitHub Actions runs the test suite on every push (`.github/workflows/tests.yml`).
+
 ### Model notes
 
 The multi-compartment model is generic, **not fitted to the individual cell**: Hodgkin-Huxley channels in the soma and axon, passive dendrites, and an axon initial segment (AIS) with a high Na/K density where spikes start (a synthetic AIS is added if the reconstruction has no axon). Without the AIS, the large passive dendritic tree loads the soma so heavily that squid HH channels fire one spike and then block. All parameters are in `simulation.Biophysics`.
@@ -126,7 +137,7 @@ Fitted models match passive properties and rheobase closely, and firing rates re
 1. ✅ Core library: database access, morphometrics, simulations
 2. ✅ Web app (Streamlit): search the database, 3D viewer, run experiments interactively
 3. ✅ Real electrophysiology: compare simulations against Allen Cell Types recordings (eFEL features) and fit models to them
-4. ⬜ Deploy online
+4. ⬜ Deploy online (configuration ready, see *Deploying the app*)
 
 <!-- Simulation Neuroscience -->
 # Simulation Neuroscience

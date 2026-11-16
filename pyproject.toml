@@ -25,4 +25,5 @@ build-backend = "setuptools.build_meta"
 include = ["neurosim*"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 markers = ["network: test needs internet access to an online database"]
