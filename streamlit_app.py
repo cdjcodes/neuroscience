@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from neurosim import ephys, fitting
+from neurosim import channels, ephys, fitting
 from neurosim import morphology as mo
 from neurosim import simulation as sim
 from neurosim import viz
@@ -26,6 +26,9 @@ ALLEN = "Allen Cell Types (with recordings)"
 NEUROMORPHO = "NeuroMorpho.org database"
 UPLOAD = "Upload an SWC file"
 BALL_STICK = "Ball-and-stick model"
+MODEL_ALLEN = "Allen biophysical model (cortical channels)"
+MODEL_FIT = "Hodgkin-Huxley fitted here"
+MODEL_GENERIC = "Generic Hodgkin-Huxley (adjustable)"
 
 st.set_page_config(page_title="NeuroSim Lab", page_icon="🧠", layout="wide")
 
@@ -99,11 +102,27 @@ def analyse(swc_text: str) -> dict:
     }
 
 
+@st.cache_data(ttl=7 * 24 * 3600, show_spinner="Downloading the Allen Institute's model of this cell…")
+def allen_model_params(specimen_id: int) -> dict | None:
+    return allen_client().perisomatic_model(specimen_id)
+
+
+@st.cache_resource(show_spinner="Compiling cortical ion-channel models (first time only, ~30 s)…")
+def channels_status() -> tuple[bool, str]:
+    try:
+        channels.ensure_perisomatic_channels()
+        return True, ""
+    except channels.ChannelsUnavailable as e:
+        return False, str(e)
+
+
 def _build_cell(model: dict, bio: dict):
-    b = sim.Biophysics(**bio)
     if model["kind"] == "ball_and_stick":
-        return sim.BallAndStick(**model["params"], bio=b)
-    return sim.MorphologyCell(analyse(model["swc"])["morph"], b)
+        return sim.BallAndStick(**model["params"], bio=sim.Biophysics(**bio))
+    morph = analyse(model["swc"])["morph"]
+    if model["kind"] == "allen_perisomatic":
+        return sim.AllenPerisomaticCell(morph, model["params"])
+    return sim.MorphologyCell(morph, sim.Biophysics(**bio))
 
 
 @st.cache_data(max_entries=16, ttl=3600, show_spinner="Simulating with NEURON…")  # results can be ~8 MB each
@@ -249,15 +268,23 @@ def allen_picker():
     recon = c4.selectbox("Reconstruction", [ANY, "full", "dendrite-only"],
                          help="Full reconstructions include the axon.")
     pool = [c for c in pool if (region == ANY or c.region == region) and (recon == ANY or c.reconstruction == recon)]
+    only_models = st.checkbox(
+        "Only cells with an Allen biophysical model (realistic cortical ion channels)", True,
+        help="The Allen Institute fitted detailed models with cortical Na, K, Ca and Ih channels to 236 of these "
+             "cells. Other cells can still be simulated with a Hodgkin-Huxley model that you fit here.")
+    if only_models:
+        pool = [c for c in pool if c.has_perisomatic_model]
     if not pool:
         st.warning("No cells match these filters.")
         return None
 
     fitted = {int(p.stem) for p in FIT_DIR.glob("*.json")} if FIT_DIR.exists() else set()
-    st.caption(f"**{len(pool):,}** matching cells. Click a row to load it. ✓ = a fitted model is already saved.")
+    st.caption(f"**{len(pool):,}** matching cells. Click a row to load it. Allen model ✓ = published biophysical "
+               "model available; HH fit ✓ = a Hodgkin-Huxley fit is already saved.")
     df = pd.DataFrame([{
         "Specimen": c.specimen_id,
-        "Fitted": "✓" if c.specimen_id in fitted else "",
+        "Allen model": "✓" if c.has_perisomatic_model else "",
+        "HH fit": "✓" if c.specimen_id in fitted else "",
         "Species": c.species,
         "Region": c.region_name or c.region,
         "Layer": c.layer,
@@ -271,7 +298,7 @@ def allen_picker():
     } for c in pool])
     event = st.dataframe(
         df, hide_index=True, width="stretch", height=260, on_select="rerun", selection_mode="single-row",
-        key=f"allen_{species}_{dtype}_{region}_{recon}",
+        key=f"allen_{species}_{dtype}_{region}_{recon}_{only_models}",
         column_config={
             "Specimen": st.column_config.NumberColumn(format="%d"),
             "Rest (mV)": st.column_config.NumberColumn(format="%.1f"),
@@ -329,26 +356,58 @@ if swc_text:
 # Sidebar: membrane model (fitted, if available, or hand-tuned)
 # ---------------------------------------------------------------------------
 fit = load_fit(allen_cell.specimen_id) if allen_cell else None
-use_fit = False
-if fit:
-    use_fit = st.sidebar.toggle("Use the model fitted to this cell", True,
-                                help="Parameters fitted to this cell's recorded resting potential, input "
-                                     "resistance, time constant and f-I curve.")
+allen_params = None
+if allen_cell and allen_cell.has_perisomatic_model and swc_text:
+    try:
+        allen_params = allen_model_params(allen_cell.specimen_id)
+    except Exception as e:
+        st.sidebar.warning(f"Could not download the Allen model: {e}")
+channels_ok = False
+if allen_params:
+    channels_ok, channels_err = channels_status()
+    if not channels_ok:
+        st.sidebar.warning("The cortical ion-channel models could not be compiled on this server, so the Allen "
+                           "model is unavailable here.")
+        with st.sidebar.expander("Compiler output"):
+            st.code(channels_err)
+
+choices = ([MODEL_ALLEN] if allen_params and channels_ok else []) + ([MODEL_FIT] if fit else []) + [MODEL_GENERIC]
+choice = st.sidebar.radio(
+    "Membrane model", choices,
+    help="Allen biophysical model: published by the Allen Institute for this cell, with cortical Na, K, Ca and "
+         "Ih channels. Hodgkin-Huxley fitted here: squid-axon channels fitted to this cell in this app. "
+         "Generic: textbook Hodgkin-Huxley parameters you can adjust.",
+) if len(choices) > 1 else MODEL_GENERIC
 
 defaults = sim.Biophysics()
-if use_fit:
+generic_bio = asdict(defaults)
+if choice == MODEL_ALLEN:
+    model = {"kind": "allen_perisomatic", "swc": swc_text, "params": allen_params}
+    bio = {}
+    with st.sidebar.expander("Allen model details"):
+        cond = allen_params["conditions"][0]
+        mechs = sorted({g["mechanism"] for g in allen_params["genome"] if g["mechanism"]})
+        st.markdown(
+            f"- Channels: {', '.join(mechs)}\n"
+            f"- Temperature **{cond['celsius']:g} °C**, E_Na **{cond['erev'][0].get('ena', float('nan')):g}** mV, "
+            f"E_K **{cond['erev'][0].get('ek', float('nan')):g}** mV\n"
+            f"- Axon replaced by a 60 µm stub, as in Allen's model\n"
+            f"- Fitted by the Allen Institute to sweep(s) "
+            f"{', '.join(map(str, allen_params.get('fitting', [{}])[0].get('sweeps', [])))}"
+        )
+elif choice == MODEL_FIT:
     bio = asdict(fit.bio)
     with st.sidebar.expander("Fitted membrane model"):
         b = fit.bio
         st.markdown(
             f"- Leak g_pas: **{b.g_pas:.2e}** S/cm², E_leak **{b.e_pas:.1f}** mV\n"
-            f"- Capacitance cm: **{b.cm:.2f}** µF/cm²\n"
+            f"- Dendritic capacitance: **{(b.cm_dendrite or b.cm):.2f}** µF/cm²\n"
             f"- ḡNa **{b.gnabar:.3f}**, ḡK **{b.gkbar:.3f}** S/cm² (× {b.soma_hh_scale:g} soma, "
             f"× {b.ais_hh_scale:g} AIS)\n"
             f"- Kinetics temperature factor: **{b.celsius:g} °C**"
         )
 else:
-    with st.sidebar.expander("Membrane model"):
+    with st.sidebar.expander("Membrane model parameters"):
         st.caption("Hodgkin-Huxley soma/axon with passive dendrites. Generic parameters, not fitted to the cell.")
         gnabar = st.slider("Na conductance ḡNa (S/cm²)", 0.0, 0.5, defaults.gnabar, 0.01)
         gkbar = st.slider("K conductance ḡK (S/cm²)", 0.0, 0.2, defaults.gkbar, 0.002)
@@ -363,7 +422,7 @@ else:
                                   help="Spikes start in the AIS. Set 0 to remove it.")
         else:
             soma_scale, ais_scale = 1.0, 0.0
-    bio = asdict(sim.Biophysics(
+    bio = generic_bio = asdict(sim.Biophysics(
         gnabar=gnabar, gkbar=gkbar, g_pas=g_pas, Ra=Ra, celsius=celsius, dendrite_hh_scale=dend_scale,
         soma_hh_scale=soma_scale, ais_hh_scale=ais_scale,
     ))
@@ -416,45 +475,70 @@ if allen_cell:
         long_sq = [s for s in sweeps if s.stimulus == "Long Square" and s.start_s is not None]
         targets = fitting.targets_from_allen(allen_cell, sweeps) if sweeps else None
 
-        # --- fitting -------------------------------------------------------
-        st.markdown("#### 1 · Fit the model to this cell")
-        if fit is None:
-            st.markdown(
-                "The simulation below uses generic textbook parameters, so it won't look like the recording yet. "
-                "Fitting tunes the leak, capacitance, Na/K densities and channel kinetics so the model "
-                "matches this cell's resting potential, input resistance, time constant, rheobase and f-I curve."
-            )
-            if not can_simulate:
-                st.warning("This reconstruction is too large to fit here.")
-            elif targets is None or targets.rheobase is None:
-                st.warning("This cell has no usable long-square recordings to fit.")
-            elif st.button("Fit model to this cell (≈1–2 min)", type="primary"):
-                with st.status("Fitting…", expanded=False) as status:
-                    res = fitting.fit(analysis["morph"], targets, progress=lambda m: status.update(label=m))
-                    save_fit(sid, res)
-                    status.update(label="Fit complete", state="complete")
-                st.rerun()
-        else:
-            t, a = fit.targets, fit.achieved
-            rows = [
-                ("Resting potential", "mV", t.vrest, a["vrest"]),
-                ("Input resistance", "MΩ", t.ri, a["ri"]),
-                ("Membrane time constant", "ms", t.tau, a["tau"]),
-                ("Rheobase", "pA", (t.rheobase or np.nan) * 1000, a["rheobase"] * 1000),
-            ]
-            c1, c2 = st.columns([2, 3])
-            with c1:
-                st.dataframe(pd.DataFrame(rows, columns=["Property", "Unit", "Recorded", "Fitted model"]),
+        # Models to compare: Allen's published model, the HH fit made here, and
+        # the generic HH model when it is selected (or nothing else exists).
+        morph_model = {"kind": "morphology", "swc": swc_text}
+        allen_model = {"kind": "allen_perisomatic", "swc": swc_text, "params": allen_params}
+        cmp_models = []  # (label, model, bio, dt)
+        if allen_params and channels_ok:
+            cmp_models.append(("Allen model", allen_model, {}, 0.025))
+        if fit:
+            cmp_models.append(("HH fit", morph_model, asdict(fit.bio), fitting.FIT_DT))
+        if choice == MODEL_GENERIC or not cmp_models:
+            cmp_models.append(("Generic HH", morph_model, generic_bio, 0.025))
+
+        # --- the models -----------------------------------------------------
+        st.markdown("#### 1 · Models of this cell")
+        left, right = st.columns([2, 3])
+        with left:
+            if allen_params and channels_ok:
+                st.markdown(
+                    "**Allen biophysical model** · published by the Allen Institute, with cortical Na, K, Ca and Ih "
+                    "channels fitted to this cell's recordings. Spikes have realistic shapes.")
+            elif allen_cell.has_perisomatic_model:
+                st.markdown("**Allen biophysical model** · unavailable on this server (the ion-channel models could "
+                            "not be compiled).")
+            else:
+                st.caption("The Allen Institute did not publish a biophysical model for this cell.")
+
+            st.markdown("**Hodgkin-Huxley fit** · squid-axon channels fitted here to this cell's resting "
+                        "potential, input resistance, time constant, rheobase and f-I curve.")
+            if fit is None:
+                if not can_simulate:
+                    st.warning("This reconstruction is too large to fit here.")
+                elif targets is None or targets.rheobase is None:
+                    st.warning("This cell has no usable long-square recordings to fit.")
+                elif st.button("Fit Hodgkin-Huxley model (≈1–2 min)", type="secondary" if allen_params else "primary"):
+                    with st.status("Fitting…", expanded=False) as status:
+                        res = fitting.fit(analysis["morph"], targets, progress=lambda m: status.update(label=m))
+                        save_fit(sid, res)
+                        status.update(label="Fit complete", state="complete")
+                    st.rerun()
+            else:
+                t, a = fit.targets, fit.achieved
+                rows = [
+                    ("Resting potential", "mV", t.vrest, a["vrest"]),
+                    ("Input resistance", "MΩ", t.ri, a["ri"]),
+                    ("Membrane time constant", "ms", t.tau, a["tau"]),
+                    ("Rheobase", "pA", (t.rheobase or np.nan) * 1000, a["rheobase"] * 1000),
+                ]
+                st.dataframe(pd.DataFrame(rows, columns=["Property", "Unit", "Recorded", "HH fit"]),
                              hide_index=True, width="stretch",
                              column_config={"Recorded": st.column_config.NumberColumn(format="%.1f"),
-                                            "Fitted model": st.column_config.NumberColumn(format="%.1f")})
+                                            "HH fit": st.column_config.NumberColumn(format="%.1f")})
                 for note in fit.notes:
                     st.caption(f"ℹ️ {note}")
-                if not use_fit:
-                    st.info("The fitted model is switched off in the sidebar.")
-            with c2:
-                st.caption("f-I curve: firing rate on 1 s current steps")
-                st.plotly_chart(viz.fi_comparison_figure(t.fi_amps, t.fi_rates, fit.fi_rates_model),
+        with right:
+            st.caption("f-I curve: firing rate on 1 s current steps")
+            if targets is not None and len(targets.fi_amps):
+                fi_models = {}
+                if allen_params and channels_ok and can_simulate:
+                    fi_stim = asdict(sim.CurrentClamp(delay=100.0, dur=targets.step_ms,
+                                                      tstop=100.0 + targets.step_ms + 20, dt=0.025))
+                    _, fi_models["Allen model"] = run_fi(allen_model, {}, fi_stim, tuple(targets.fi_amps))
+                if fit:
+                    fi_models["HH fit"] = fit.fi_rates_model
+                st.plotly_chart(viz.fi_comparison_figure(targets.fi_amps, targets.fi_rates, fi_models),
                                 width="stretch")
 
         # --- sweep comparison ----------------------------------------------
@@ -476,24 +560,37 @@ if allen_cell:
                 trace = None
             if trace is not None:
                 pre = 100.0
-                sim_stim = asdict(sim.CurrentClamp(amp=chosen / 1000, delay=pre, dur=step_ms,
-                                                   tstop=pre + step_ms + 200, dt=fitting.FIT_DT))
-                res, _ = run_clamp(model, bio, sim_stim, None)
-                t_sim, v_sim = res.t - pre, res.v["soma"]
+                sim_traces = []
+                for label, m, b, dt in cmp_models:
+                    sim_stim = asdict(sim.CurrentClamp(amp=chosen / 1000, delay=pre, dur=step_ms,
+                                                       tstop=pre + step_ms + 200, dt=dt))
+                    res, _ = run_clamp(m, b, sim_stim, None)
+                    sim_traces.append((label, res.t - pre, res.v["soma"]))
                 st.plotly_chart(viz.comparison_figure(
-                    trace.t, trace.v, t_sim, v_sim,
-                    title=f"Sweep {sweep.number}: {chosen} pA for {step_ms:.0f} ms "
-                          f"({'fitted' if use_fit else 'generic'} model)",
+                    trace.t, trace.v, sim_traces,
+                    title=f"Sweep {sweep.number}: {chosen} pA for {step_ms:.0f} ms",
                 ), width="stretch")
-                # input resistance is only meaningful on hyperpolarising (non-spiking) steps
-                amp_for_ri = chosen / 1000 if chosen < 0 else None
-                f_rec = ephys.features(trace.t, trace.v, 0.0, step_ms, amp_for_ri)
-                f_sim = ephys.features(t_sim, v_sim, 0.0, step_ms, amp_for_ri)
-                table = pd.DataFrame(ephys.compare(f_rec, f_sim))
-                st.caption("Electrophysiology features computed with eFEL on both traces")
-                st.dataframe(table, hide_index=True, width="stretch", column_config={
-                    c: st.column_config.NumberColumn(format="%.2f") for c in ("Recorded", "Simulated", "Difference")
-                })
+
+                c1, c2 = st.columns([2, 3])
+                with c1:
+                    st.caption("First action potential, aligned on its peak")
+                    st.plotly_chart(viz.spike_shape_figure(trace.t, trace.v, sim_traces), width="stretch")
+                with c2:
+                    # input resistance is only meaningful on hyperpolarising (non-spiking) steps
+                    amp_for_ri = chosen / 1000 if chosen < 0 else None
+                    columns = {"Recorded": ephys.features(trace.t, trace.v, 0.0, step_ms, amp_for_ri)}
+                    for label, t_sim, v_sim in sim_traces:
+                        columns[label] = ephys.features(t_sim, v_sim, 0.0, step_ms, amp_for_ri)
+                    table = pd.DataFrame([
+                        {"Feature": label_, "Unit": unit, **{k: f.get(name, np.nan) for k, f in columns.items()}}
+                        for name, (label_, unit) in ephys.FEATURES.items() if name in columns["Recorded"]
+                    ])
+                    st.caption("Electrophysiology features (eFEL), computed identically on every trace")
+                    st.dataframe(table, hide_index=True, width="stretch", column_config={
+                        k: st.column_config.NumberColumn(format="%.2f") for k in columns})
+                if sweep.num_spikes <= 2 and allen_params:
+                    st.caption("ℹ️ Near threshold, small differences in excitability change the spike count a lot; "
+                               "models usually agree best on the sweeps they were fitted to.")
         else:
             st.warning("This reconstruction is too large to simulate here.")
 
@@ -563,7 +660,7 @@ with tabs["Current clamp"]:
         m4.metric("Resting V", f"{v[res.t < delay].mean() if delay > 0 else v[0]:.1f} mV")
         st.plotly_chart(viz.traces_figure(res), width="stretch")
         if show_3d:
-            vmin = min(-80.0, float(bio["v_init"]) - 5)
+            vmin = min(-80.0, float(v.min()) - 2)
             st.caption("Press ▶ to watch the membrane potential propagate (colour = mV).")
             st.plotly_chart(viz.voltage_figure(analysis["geometry"], res, vmin=vmin), width="stretch")
         if info.get("compartments"):

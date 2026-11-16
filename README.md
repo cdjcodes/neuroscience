@@ -46,7 +46,8 @@ Personal repository for all Neuroscience related projects.
 | --- | --- | --- |
 | `neurosim.sources` | Search [NeuroMorpho.org](https://neuromorpho.org) (300k+ reconstructed neurons) and the [Allen Cell Types Database](https://celltypes.brain-map.org) (667 neurons with both a reconstruction and patch-clamp recordings). Allen recordings are streamed sweep by sweep from the NWB files with HTTP range requests, so only the requested trace is downloaded. Everything is cached locally | NeuroMorpho & Allen REST APIs, h5py |
 | `neurosim.morphology` | Load reconstructions (repairing the common soma problems in database files), compute morphometrics, Sholl analysis, distributions, 3D geometry for plotting | [NeuroM](https://github.com/openbraininstitute/NeuroM) |
-| `neurosim.simulation` | Current-clamp experiments, f-I curves and rheobase, on the classic ball-and-stick model or on a full multi-compartment model built from any downloaded neuron | [NEURON](https://nrn.readthedocs.io) |
+| `neurosim.simulation` | Current-clamp experiments, f-I curves and rheobase, on the classic ball-and-stick model, a Hodgkin-Huxley multi-compartment model built from any downloaded neuron, or the Allen Institute's published biophysical model of a cell | [NEURON](https://nrn.readthedocs.io) |
+| `neurosim.channels` | Cortical ion-channel models (Na, K, Ca, Ih) from the Allen Institute's perisomatic models, pinned and reviewed in `neurosim/mechanisms/`, compiled on first use with `nrnivmodl` | NEURON + C compiler |
 | `neurosim.ephys` | Electrophysiology features (spike count, rate, latency, threshold, spike shape, adaptation, input resistance) computed identically on recorded and simulated traces | [eFEL](https://github.com/openbraininstitute/eFEL) |
 | `neurosim.fitting` | Fit a model to a recorded cell: resting potential, input resistance, membrane time constant, rheobase and f-I curve | NEURON |
 
@@ -107,7 +108,7 @@ streamlit run streamlit_app.py
 
 The app opens at http://localhost:8501 and lets you:
 
-- **Compare with recording** (Allen cells): fit the model to the cell in about a minute (fits are saved, so each cell is fitted only once), then replay any recorded current step and compare the recorded and simulated voltage side by side, with an eFEL feature table and the recorded vs. model f-I curve.
+- **Compare with recording** (Allen cells): replay any recorded current step and compare the recording with every available model: the Allen Institute's published biophysical model (cortical channels; 236 cells) and a Hodgkin-Huxley model you fit in the app in about a minute. The tab shows the voltage traces, a close-up of the first action potential, an eFEL feature table and recorded vs. model f-I curves.
 - **Find a neuron**: browse Allen cells by species, dendrite type and region, or filter NeuroMorpho.org by species, brain region, cell type and lab (or type a neuron name), then click a row to load it. You can also upload your own `.swc` file or use the course's ball-and-stick model.
 - **Morphology**: an interactive 3D view, key morphometrics, Sholl analysis and branch statistics.
 - **Current clamp**: inject a current step and see the voltage at the soma, the farthest dendrite and the axon, plus an animated 3D view of the voltage spreading through the cell.
@@ -127,7 +128,9 @@ Dependencies come from `requirements.txt` and settings from `.streamlit/config.t
 
 ### Model notes
 
-The multi-compartment model is generic, **not fitted to the individual cell**: Hodgkin-Huxley channels in the soma and axon, passive dendrites, and an axon initial segment (AIS) with a high Na/K density where spikes start (a synthetic AIS is added if the reconstruction has no axon). Without the AIS, the large passive dendritic tree loads the soma so heavily that squid HH channels fire one spike and then block. All parameters are in `simulation.Biophysics`.
+**Allen biophysical models** (`simulation.AllenPerisomaticCell`): for 236 reconstructed cells, the Allen Institute published a model fitted to that cell's recordings. It has cortical channels in the soma (transient and persistent Na, Kv3.1, K_T, K_P, Im, SK, HVA/LVA Ca with Ca dynamics, Ih), passive dendrites and an axon stub, simulated at 34 °C. The app rebuilds it following Allen's recipe, using the 16 channel files pinned in `neurosim/mechanisms/allen_perisomatic` (sources, terms of use and checksums in its README). They are compiled once with `nrnivmodl`, which needs a C compiler (`packages.txt` installs one on Streamlit Cloud). Allen fitted these models to junction-potential-corrected data, so their voltages are shifted by the fit's junction potential (+14 mV) to compare with the raw recordings. On the sweeps they were fitted to, they reproduce spike count, latency and spike shape closely (e.g. 1.14 vs 1.08 ms half-width). Near threshold they can differ more.
+
+**Hodgkin-Huxley models:** the multi-compartment model is generic, **not fitted to the individual cell**: Hodgkin-Huxley channels in the soma and axon, passive dendrites, and an axon initial segment (AIS) with a high Na/K density where spikes start (a synthetic AIS is added if the reconstruction has no axon). Without the AIS, the large passive dendritic tree loads the soma so heavily that squid HH channels fire one spike and then block. All parameters are in `simulation.Biophysics`.
 
 **Fitting** (`neurosim.fitting`) works in two cheap stages:
 1. **Passive:** a uniform leak is fitted by bisection to the recorded input resistance and resting potential. Dendritic capacitance is fitted to the time constant, while the soma and axon keep 1 µF/cm². The extra dendritic capacitance stands in for spines, which reconstructions omit.
@@ -141,6 +144,7 @@ Fitted models match passive properties and rheobase closely, and firing rates re
 2. ✅ Web app (Streamlit): search the database, 3D viewer, run experiments interactively
 3. ✅ Real electrophysiology: compare simulations against Allen Cell Types recordings (eFEL features) and fit models to them
 4. ✅ Deployed online: [neurosimlabcdj.streamlit.app](https://neurosimlabcdj.streamlit.app/)
+5. ✅ Realistic spike shapes: the Allen Institute's biophysical models with cortical ion channels
 
 <!-- Simulation Neuroscience -->
 # Simulation Neuroscience

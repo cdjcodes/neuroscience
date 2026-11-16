@@ -71,6 +71,11 @@ class AllenCell:
         return f"https://celltypes.brain-map.org/experiment/electrophysiology/{self.specimen_id}"
 
     @property
+    def has_perisomatic_model(self) -> bool:
+        """True if the Allen Institute published a fitted perisomatic biophysical model."""
+        return bool(self.raw.get("m__biophys_perisomatic"))
+
+    @property
     def label(self) -> str:
         parts = [self.species, f"{self.region} L{self.layer}" if self.layer else self.region,
                  self.dendrite_type, self.line]
@@ -258,6 +263,36 @@ class AllenCellTypesClient:
             path.write_text(text)
         return text
 
+    # --- published models ---------------------------------------------------
+    def perisomatic_model(self, cell: AllenCell | int) -> dict | None:
+        """Allen's fitted "Biophysical - perisomatic" parameters for a cell, or None.
+
+        The returned dict has ``passive``, ``conditions``, ``genome`` and
+        ``fitting`` entries (see :class:`neurosim.simulation.AllenPerisomaticCell`).
+        """
+        cell = cell if isinstance(cell, AllenCell) else self.get(cell)
+        if not cell.has_perisomatic_model:
+            return None
+        path = self._cache(f"models/{cell.specimen_id}_perisomatic.json")
+        if path and path.exists():
+            return json.loads(path.read_text())
+        rows = self._query(
+            "model::NeuronalModel,rma::criteria,"
+            f"[specimen_id$eq{cell.specimen_id}],neuronal_model_template[name$eq'Biophysical - perisomatic'],"
+            "rma::include,well_known_files(well_known_file_type)"
+        )
+        file_id = next((w["id"] for m in rows for w in m.get("well_known_files", [])
+                        if w["well_known_file_type"]["name"] == "NeuronalModelParameters"), None)
+        if file_id is None:
+            return None
+        r = self.session.get(f"{FILE_URL}/{file_id}", timeout=self.timeout)
+        r.raise_for_status()
+        params = r.json()
+        if path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(params))
+        return params
+
     # --- electrophysiology --------------------------------------------------
     def sweeps(self, specimen_id: int) -> list[Sweep]:
         path = self._cache(f"sweeps/{specimen_id}.json")
@@ -317,10 +352,13 @@ class AllenCellTypesClient:
                 a = max(0, int((sweep.start_s - pre_ms / 1000) * rate))
                 b = int((sweep.start_s + sweep.duration_s + post_ms / 1000) * rate)
                 v = np.asarray(ts["data"][a:b:step], dtype=float)
-                conv = float(ts["data"].attrs.get("conversion", 1.0))
         finally:
             f.close()
-        v = v * conv * 1000.0  # V -> mV
+        # The "conversion" attribute is inconsistent across Allen NWB files
+        # (some store volts but declare conversion=1e-3), so infer the scale:
+        # membrane potentials are tens of mV, i.e. |v| < 1 only if in volts.
+        if np.nanmedian(np.abs(v)) < 1.0:
+            v = v * 1000.0  # V -> mV
         t = (a + np.arange(len(v)) * step) / rate * 1000.0 - sweep.start_s * 1000.0
         ok = np.isfinite(v)
         t, v = t[ok], v[ok]

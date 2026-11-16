@@ -1,6 +1,6 @@
 """Current-clamp experiments with NEURON (https://nrn.readthedocs.io).
 
-Two kinds of cell are provided:
+Three kinds of cell are provided:
 
 * :class:`BallAndStick` – the classic teaching model from the EPFL
   *Simulation Neuroscience* course: a Hodgkin-Huxley soma and a passive
@@ -9,8 +9,12 @@ Two kinds of cell are provided:
   reconstructed neuron (e.g. one downloaded from NeuroMorpho.org), with
   Hodgkin-Huxley channels in the soma/axon and passive (or optionally
   active) dendrites.
+* :class:`AllenPerisomaticCell` – a real morphology with the Allen
+  Institute's published, cell-specific "perisomatic" biophysical model:
+  cortical Na, K, Ca and Ih channels (compiled from
+  ``neurosim/mechanisms``) fitted to that cell's recordings.
 
-Both share :meth:`Cell.run` (single current step) and :func:`fi_curve`.
+All share :meth:`Cell.run` (single current step) and :func:`fi_curve`.
 
 NEURON keeps one global simulation state, so all building/running is
 serialised through a lock, which makes the module safe to use from a
@@ -21,7 +25,7 @@ from __future__ import annotations
 
 import math
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import neurom as nm
 import numpy as np
@@ -141,6 +145,9 @@ class Cell:
         self.soma = None
         self.sections: list = []  # all non-soma sections
         self.sites: dict[str, object] = {}  # name -> segment to record from
+        # Added to every recorded voltage, e.g. to express a model fitted to
+        # junction-potential-corrected data in the recording's frame.
+        self.v_offset = 0.0
 
     def run(self, stim: CurrentClamp | None = None, record_sections_dt: float | None = None) -> SimulationResult:
         """Inject a current step into the soma and record the response.
@@ -168,7 +175,7 @@ class Cell:
             h.continuerun(stim.tstop)
 
             t = t_vec.as_numpy().copy()
-            v = {name: vec.as_numpy().copy() for name, vec in site_vecs.items()}
+            v = {name: vec.as_numpy() + self.v_offset for name, vec in site_vecs.items()}
             result = SimulationResult(
                 t=t,
                 v=v,
@@ -178,7 +185,8 @@ class Cell:
             )
             if record_sections_dt:
                 result.t_sections = t_sec_vec.as_numpy().copy()
-                result.v_sections = np.array([vec.as_numpy() for vec in sec_vecs]) if sec_vecs else None
+                result.v_sections = (np.array([vec.as_numpy() for vec in sec_vecs]) + self.v_offset
+                                     if sec_vecs else None)
             del clamp
         return result
 
@@ -288,6 +296,103 @@ class MorphologyCell(Cell):
     def n_compartments(self) -> int:
         extra = self.ais.nseg if self.ais is not None else 0
         return self.soma.nseg + extra + sum(sec.nseg for sec in self.sections)
+
+
+class AllenPerisomaticCell(Cell):
+    """A real morphology with an Allen Institute "Biophysical - perisomatic" model.
+
+    ``params`` is the model's fit file (see
+    :meth:`AllenCellTypesClient.perisomatic_model`). Construction follows the
+    Allen recipe: dendrites from the reconstruction, the axon replaced by a
+    60 um stub, ``nseg = 1 + 2 * int(L / 40)``, per-section-type passive
+    properties, active channels from the fitted "genome" (mostly somatic),
+    and the fit's temperature, reversal potentials and initial voltage.
+
+    Allen fitted these models to recordings corrected for a liquid junction
+    potential, so recorded voltages are shifted back into the uncorrected
+    frame of the raw recordings (``v_offset = -junction_potential``).
+
+    ``self.sections[i]`` matches ``Geometry.section_index == i``; axon
+    geometry maps to the axon stub.
+    """
+
+    def __init__(self, morph, params: dict):
+        from .channels import ensure_perisomatic_channels
+
+        ensure_perisomatic_channels()
+        passive = params["passive"][0]
+        cond = params["conditions"][0]
+        fitting = (params.get("fitting") or [{}])[0]
+        super().__init__(replace(Biophysics(), celsius=float(cond["celsius"]), v_init=float(cond["v_init"])))
+        self.v_offset = -float(fitting.get("junction_potential", 0.0))
+        self.params = params
+
+        with _LOCK:
+            self.soma = h.Section(name="soma")
+            r = max(float(morph.soma.radius), 1.0)
+            self.soma.L = self.soma.diam = 2 * r
+            groups: dict[str, list] = {"soma": [self.soma], "dend": [], "apic": [], "axon": []}
+
+            by_id: dict[int, object] = {}
+            geometry_sections: list = []
+            for i, s in enumerate(nm.iter_sections(morph)):
+                if s.type == nm.NeuriteType.axon:
+                    geometry_sections.append(None)
+                    continue
+                kind = "apic" if s.type == nm.NeuriteType.apical_dendrite else "dend"
+                sec = h.Section(name=f"{kind}_{i}")
+                for x, y, z, rad in s.points[:, :4]:
+                    sec.pt3dadd(float(x), float(y), float(z), max(2 * float(rad), 0.1))
+                parent = by_id.get(s.parent.id) if s.parent is not None else None
+                sec.connect(parent(1) if parent is not None else self.soma(0.5))
+                groups[kind].append(sec)
+                by_id[s.id] = sec
+                geometry_sections.append(sec)
+
+            # Allen replaces the reconstructed axon with a 60 um, 1 um-diameter stub.
+            ax0, ax1 = h.Section(name="axon_0"), h.Section(name="axon_1")
+            for ax in (ax0, ax1):
+                ax.L, ax.diam = 30.0, 1.0
+            ax0.connect(self.soma(0.5))
+            ax1.connect(ax0(1))
+            groups["axon"] = [ax0, ax1]
+            self._owned = [sec for secs in groups.values() for sec in secs]
+
+            cm = {c["section"]: float(c["cm"]) for c in passive["cm"]}
+            for kind, secs in groups.items():
+                for sec in secs:
+                    sec.nseg = 1 + 2 * int(sec.L / 40.0)
+                    sec.Ra = float(passive["ra"])
+                    sec.cm = cm.get(kind, 1.0)
+                    sec.insert("pas")
+                    for seg in sec:
+                        seg.pas.e = float(passive["e_pas"])
+            for gene in params["genome"]:
+                for sec in groups.get(gene["section"], []):
+                    if gene["mechanism"]:
+                        sec.insert(gene["mechanism"])
+                    setattr(sec, gene["name"], float(gene["value"]))
+            for erev in cond.get("erev", []):
+                for sec in groups.get(erev["section"], []):
+                    if "ena" in erev and h.ismembrane("na_ion", sec=sec):
+                        sec.ena = float(erev["ena"])
+                    if "ek" in erev and h.ismembrane("k_ion", sec=sec):
+                        sec.ek = float(erev["ek"])
+
+            self.sections = [sec if sec is not None else ax1 for sec in geometry_sections]
+            self.ais = None
+            self.sites = {"soma": self.soma(0.5)}
+            dends = groups["dend"] + groups["apic"]
+            if dends:
+                h.distance(0, self.soma(0.5))
+                tip = max(dends, key=lambda sec: h.distance(sec(1)))
+                self.sites["farthest_dendrite"] = tip(1)
+                self.farthest_dendrite_um = h.distance(tip(1))
+            self.sites["axon"] = ax1(1)
+
+    @property
+    def n_compartments(self) -> int:
+        return sum(sec.nseg for sec in self._owned)
 
 
 def fi_curve(cell: Cell, amps, stim: CurrentClamp | None = None) -> tuple[np.ndarray, np.ndarray]:

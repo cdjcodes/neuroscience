@@ -42,3 +42,18 @@ def test_stream_one_sweep(client):
     crossings = int(np.sum(~above[:-1] & above[1:]))
     assert crossings == sweep.num_spikes
     assert -95 < np.median(tr.v[tr.t < 0]) < -60
+
+
+def test_perisomatic_model(client):
+    params = client.perisomatic_model(485909730)
+    assert {"passive", "conditions", "genome", "fitting"} <= set(params)
+    assert any(g["mechanism"] == "NaTs" for g in params["genome"])
+    no_model = next(c for c in client.cells() if not c.has_perisomatic_model)
+    assert client.perisomatic_model(no_model) is None
+
+
+def test_trace_units_when_nwb_conversion_is_wrong(client):
+    """Some NWB files store volts but declare conversion=1e-3; traces must still be in mV."""
+    sweep = next(s for s in client.sweeps(531520637) if s.number == 54)
+    tr = client.trace(531520637, sweep)
+    assert -90 < np.median(tr.v[tr.t < 0]) < -60

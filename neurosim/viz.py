@@ -171,16 +171,22 @@ def histogram_figure(values: np.ndarray, xlabel: str, height: int = 300) -> go.F
 
 
 RECORDED_COLOR = "#111827"
-MODEL_COLOR = "#d62728"
+MODEL_COLORS = ["#2563eb", "#d62728", "#f59e0b", "#059669"]
+
+ModelTraces = list  # list of (label, t, v) tuples
 
 
-def comparison_figure(t_rec, v_rec, t_sim, v_sim, title: str = "", height: int = 420) -> go.Figure:
-    """Recorded and simulated soma voltage on the same axes (t = 0 at stimulus onset)."""
+def comparison_figure(t_rec, v_rec, models: ModelTraces, title: str = "", height: int = 420) -> go.Figure:
+    """Recorded and simulated soma voltage on the same axes (t = 0 at stimulus onset).
+
+    ``models`` is a list of ``(label, t, v)`` tuples.
+    """
     fig = go.Figure()
     fig.add_trace(go.Scattergl(x=t_rec, y=v_rec, mode="lines", name="Recorded (Allen)",
-                               line=dict(color=RECORDED_COLOR, width=1.2)))
-    fig.add_trace(go.Scattergl(x=t_sim, y=v_sim, mode="lines", name="Model",
-                               line=dict(color=MODEL_COLOR, width=1.2)))
+                               line=dict(color=RECORDED_COLOR, width=1.3)))
+    for i, (label, t, v) in enumerate(models):
+        fig.add_trace(go.Scattergl(x=t, y=v, mode="lines", name=label,
+                                   line=dict(color=MODEL_COLORS[i % len(MODEL_COLORS)], width=1.1)))
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)) if title else None,
         xaxis_title="time from stimulus onset (ms)", yaxis_title="V (mV)", height=height,
@@ -190,13 +196,45 @@ def comparison_figure(t_rec, v_rec, t_sim, v_sim, title: str = "", height: int =
     return fig
 
 
-def fi_comparison_figure(amps, rates_rec, rates_model=None, height: int = 360) -> go.Figure:
+def _first_spike_window(t, v, window=(-3.0, 6.0)):
+    """Slice of (t, v) around the first spike peak after t=0, with t re-centred on the peak."""
+    t, v = np.asarray(t), np.asarray(v)
+    after = t >= 0
+    above = v >= 0
+    up = np.flatnonzero(after[1:] & ~above[:-1] & above[1:])
+    if not len(up):
+        return None
+    i0 = up[0] + 1
+    seg = (t >= t[i0]) & (t <= t[i0] + 2.0)
+    peak = np.flatnonzero(seg)[np.argmax(v[seg])]
+    tt = t - t[peak]
+    keep = (tt >= window[0]) & (tt <= window[1])
+    return tt[keep], v[keep]
+
+
+def spike_shape_figure(t_rec, v_rec, models: ModelTraces, height: int = 360) -> go.Figure:
+    """First action potential of each trace, aligned on its peak."""
+    fig = go.Figure()
+    entries = [("Recorded (Allen)", t_rec, v_rec, RECORDED_COLOR)] + [
+        (label, t, v, MODEL_COLORS[i % len(MODEL_COLORS)]) for i, (label, t, v) in enumerate(models)]
+    for label, t, v, color in entries:
+        w = _first_spike_window(t, v)
+        if w is None:
+            continue
+        fig.add_trace(go.Scatter(x=w[0], y=w[1], mode="lines", name=label, line=dict(color=color, width=2)))
+    fig.update_layout(xaxis_title="time from spike peak (ms)", yaxis_title="V (mV)", height=height,
+                      margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0))
+    return fig
+
+
+def fi_comparison_figure(amps, rates_rec, models: dict | None = None, height: int = 360) -> go.Figure:
+    """Recorded f-I curve plus any number of model curves ``{label: rates}`` on the same amplitudes."""
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=np.asarray(amps) * 1000, y=rates_rec, mode="lines+markers",
                              name="Recorded (Allen)", line=dict(color=RECORDED_COLOR)))
-    if rates_model is not None:
-        fig.add_trace(go.Scatter(x=np.asarray(amps) * 1000, y=rates_model, mode="lines+markers",
-                                 name="Model", line=dict(color=MODEL_COLOR, dash="dot")))
+    for i, (label, rates) in enumerate((models or {}).items()):
+        fig.add_trace(go.Scatter(x=np.asarray(amps) * 1000, y=rates, mode="lines+markers", name=label,
+                                 line=dict(color=MODEL_COLORS[i % len(MODEL_COLORS)], dash="dot")))
     fig.update_layout(xaxis_title="injected current (pA)", yaxis_title="firing rate (Hz)", height=height,
                       margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0))
     return fig

@@ -24,6 +24,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["neurosim*"]
 
+[tool.setuptools.package-data]
+neurosim = ["mechanisms/*/*.mod", "mechanisms/*/README.md"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 markers = ["network: test needs internet access to an online database"]
