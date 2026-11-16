@@ -2,6 +2,7 @@
 <!-- PROJECT SHIELDS -->
 ![Python](https://img.shields.io/badge/python-v3.10+-blue.svg)
 [![tests](https://github.com/cdjcodes/neuroscience/actions/workflows/tests.yml/badge.svg)](https://github.com/cdjcodes/neuroscience/actions/workflows/tests.yml)
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://neurosimlabcdj.streamlit.app/)
 ![Dependencies](https://img.shields.io/badge/dependencies-up%20to%20date-brightgreen.svg)
 ![Contributions welcome](https://img.shields.io/badge/contributions-welcome-orange.svg)
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/cdjcodes/neuroscience)
@@ -36,6 +37,8 @@ Personal repository for all Neuroscience related projects.
 <!-- neurosim -->
 <a name="neurosim"></a>
 # neurosim: experiments on real neurons
+
+**🧠 Try it live: [neurosimlabcdj.streamlit.app](https://neurosimlabcdj.streamlit.app/)**
 
 `neurosim` is a Python package that turns the course notebooks below into reusable code for running virtual experiments on **real neurons from online databases**, and checking them against **real recordings**:
 
@@ -114,7 +117,7 @@ Stimulus and membrane parameters (channel densities, leak, axial resistance, tem
 
 ### Deploying the app
 
-The repo is ready for [Streamlit Community Cloud](https://streamlit.io/cloud) (free):
+The app runs on [Streamlit Community Cloud](https://streamlit.io/cloud) (free) and redeploys automatically on every push to `main`. To deploy your own copy:
 
 1. Sign in at [share.streamlit.io](https://share.streamlit.io) with GitHub and click **Create app → Deploy a public app from GitHub**.
 2. Repository `cdjcodes/neuroscience`, branch `main`, main file `streamlit_app.py`.
@@ -137,7 +140,7 @@ Fitted models match passive properties and rheobase closely, and firing rates re
 1. ✅ Core library: database access, morphometrics, simulations
 2. ✅ Web app (Streamlit): search the database, 3D viewer, run experiments interactively
 3. ✅ Real electrophysiology: compare simulations against Allen Cell Types recordings (eFEL features) and fit models to them
-4. ⬜ Deploy online (configuration ready, see *Deploying the app*)
+4. ✅ Deployed online: [neurosimlabcdj.streamlit.app](https://neurosimlabcdj.streamlit.app/)
 
 <!-- Simulation Neuroscience -->
 # Simulation Neuroscience
