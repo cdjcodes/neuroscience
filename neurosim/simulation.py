@@ -48,6 +48,10 @@ class Biophysics:
 
     Ra: float = 150.0  # axial resistivity, ohm*cm
     cm: float = 1.0  # membrane capacitance, uF/cm2
+    # Dendritic capacitance (MorphologyCell). Spines add membrane that
+    # reconstructions omit, which shows up as a higher apparent capacitance in
+    # dendrites only. None = same as ``cm``.
+    cm_dendrite: float | None = None
     celsius: float = 6.3  # temperature the HH model was fitted at
     # Hodgkin-Huxley (soma + axon), S/cm2
     gnabar: float = 0.12
@@ -70,6 +74,12 @@ class Biophysics:
     ais_hh_scale: float = 20.0
     ais_length: float = 40.0  # um
     ais_diam: float = 1.0  # um, synthetic AIS only
+    # If True the HH leak is switched off and one passive leak (g_pas, e_pas)
+    # is used in every section, so resting potential, input resistance and
+    # time constant are set by e_pas, g_pas and cm alone. Used by fitting.
+    uniform_leak: bool = False
+    # Spatial discretisation (d_lambda rule); larger = fewer compartments, faster.
+    d_lambda: float = 0.1
 
 
 @dataclass
@@ -110,8 +120,10 @@ def _insert_hh(sec, bio: Biophysics, scale: float = 1.0) -> None:
     for seg in sec:
         seg.hh.gnabar = bio.gnabar * scale
         seg.hh.gkbar = bio.gkbar * scale
-        seg.hh.gl = bio.gl
+        seg.hh.gl = 0.0 if bio.uniform_leak else bio.gl
         seg.hh.el = bio.el
+    if bio.uniform_leak:
+        _insert_pas(sec, bio)
 
 
 def _insert_pas(sec, bio: Biophysics) -> None:
@@ -225,9 +237,11 @@ class MorphologyCell(Cell):
                     sec.pt3dadd(float(x), float(y), float(z), max(2 * float(rad), 0.1))
                 parent = by_id.get(s.parent.id) if s.parent is not None else None
                 sec.connect(parent(1) if parent is not None else self.soma(0.5))
-                sec.Ra, sec.cm = b.Ra, b.cm
-                _set_nseg(sec)
-                if s.type == nm.NeuriteType.axon:
+                is_axon = s.type == nm.NeuriteType.axon
+                sec.Ra = b.Ra
+                sec.cm = b.cm if is_axon or b.cm_dendrite is None else b.cm_dendrite
+                _set_nseg(sec, b.d_lambda)
+                if is_axon:
                     _insert_hh(sec, b)
                 else:
                     _insert_pas(sec, b)

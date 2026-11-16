@@ -36,13 +36,15 @@ Personal repository for all Neuroscience related projects.
 <a name="neurosim"></a>
 # neurosim: experiments on real neurons
 
-`neurosim` is a Python package that turns the course notebooks below into reusable code for running virtual experiments on **real neurons from online databases**:
+`neurosim` is a Python package that turns the course notebooks below into reusable code for running virtual experiments on **real neurons from online databases**, and checking them against **real recordings**:
 
 | Module | What it does | Built on |
 | --- | --- | --- |
-| `neurosim.sources` | Search [NeuroMorpho.org](https://neuromorpho.org) (300k+ reconstructed neurons) by species, brain region, cell type, lab, etc. and download their reconstructions (cached locally) | NeuroMorpho REST API |
+| `neurosim.sources` | Search [NeuroMorpho.org](https://neuromorpho.org) (300k+ reconstructed neurons) and the [Allen Cell Types Database](https://celltypes.brain-map.org) (667 neurons with both a reconstruction and patch-clamp recordings). Allen recordings are streamed sweep by sweep from the NWB files with HTTP range requests, so only the requested trace is downloaded. Everything is cached locally | NeuroMorpho & Allen REST APIs, h5py |
 | `neurosim.morphology` | Load reconstructions (repairing the common soma problems in database files), compute morphometrics, Sholl analysis, distributions, 3D geometry for plotting | [NeuroM](https://github.com/openbraininstitute/NeuroM) |
 | `neurosim.simulation` | Current-clamp experiments, f-I curves and rheobase, on the classic ball-and-stick model or on a full multi-compartment model built from any downloaded neuron | [NEURON](https://nrn.readthedocs.io) |
+| `neurosim.ephys` | Electrophysiology features (spike count, rate, latency, threshold, spike shape, adaptation, input resistance) computed identically on recorded and simulated traces | [eFEL](https://github.com/openbraininstitute/eFEL) |
+| `neurosim.fitting` | Fit a model to a recorded cell: resting potential, input resistance, membrane time constant, rheobase and f-I curve | NEURON |
 
 ### Quick start
 
@@ -69,6 +71,30 @@ print(result.firing_rate, "Hz")               # result.t, result.v["soma"], ...
 print(sim.fi_curve(cell, [0.1, 0.2, 0.4, 0.8]))
 ```
 
+Compare with a real recording from the Allen Cell Types Database:
+
+```python
+from neurosim.sources import AllenCellTypesClient
+from neurosim import ephys, fitting
+
+allen = AllenCellTypesClient()
+cell = allen.get(502359001)                       # mouse V1 layer 2/3 pyramidal cell
+sweeps = allen.sweeps(cell.specimen_id)
+morph = morphology.load(allen.fetch_swc(cell))
+
+fit = fitting.fit(morph, fitting.targets_from_allen(cell, sweeps))   # ~1 min
+print(fit.achieved, fit.targets.vrest, fit.targets.ri, fit.targets.tau)
+
+sweep = next(s for s in sweeps if s.stimulus == "Long Square" and s.num_spikes > 5)
+recorded = allen.trace(cell, sweep)              # streams ~3 MB instead of the whole NWB file
+model = sim.MorphologyCell(morph, fit.bio).run(
+    sim.CurrentClamp(amp=sweep.amplitude_pa / 1000, delay=100, dur=1000, tstop=1300, dt=0.05))
+print(ephys.compare(
+    ephys.features(recorded.t, recorded.v, 0, 1000),
+    ephys.features(model.t - 100, model.v["soma"], 0, 1000),
+))
+```
+
 ### Web app: NeuroSim Lab
 
 ```bash
@@ -77,7 +103,8 @@ streamlit run streamlit_app.py
 
 The app opens at http://localhost:8501 and lets you:
 
-- **Find a neuron**: filter NeuroMorpho.org by species, brain region, cell type and lab (or type a neuron name), then click a row to load it. You can also upload your own `.swc` file or use the course's ball-and-stick model.
+- **Compare with recording** (Allen cells): fit the model to the cell in about a minute (fits are saved, so each cell is fitted only once), then replay any recorded current step and compare the recorded and simulated voltage side by side, with an eFEL feature table and the recorded vs. model f-I curve.
+- **Find a neuron**: browse Allen cells by species, dendrite type and region, or filter NeuroMorpho.org by species, brain region, cell type and lab (or type a neuron name), then click a row to load it. You can also upload your own `.swc` file or use the course's ball-and-stick model.
 - **Morphology**: an interactive 3D view, key morphometrics, Sholl analysis and branch statistics.
 - **Current clamp**: inject a current step and see the voltage at the soma, the farthest dendrite and the axon, plus an animated 3D view of the voltage spreading through the cell.
 - **f-I curve**: firing rate against injected current, and the rheobase (the smallest current that makes the cell spike).
@@ -88,11 +115,17 @@ Stimulus and membrane parameters (channel densities, leak, axial resistance, tem
 
 The multi-compartment model is generic, **not fitted to the individual cell**: Hodgkin-Huxley channels in the soma and axon, passive dendrites, and an axon initial segment (AIS) with a high Na/K density where spikes start (a synthetic AIS is added if the reconstruction has no axon). Without the AIS, the large passive dendritic tree loads the soma so heavily that squid HH channels fire one spike and then block. All parameters are in `simulation.Biophysics`.
 
+**Fitting** (`neurosim.fitting`) works in two cheap stages:
+1. **Passive:** a uniform leak is fitted by bisection to the recorded input resistance and resting potential. Dendritic capacitance is fitted to the time constant, while the soma and axon keep 1 µF/cm². The extra dendritic capacitance stands in for spines, which reconstructions omit.
+2. **Active:** Na density is bisected so the model starts firing at the recorded rheobase. A small grid over K density and channel kinetic speed picks the best match to the recorded f-I curve. Squid HH channels jump straight to ~40 Hz at threshold, whereas cortical neurons can fire slowly, and slowing the kinetics fixes most of that.
+
+Fitted models match passive properties and rheobase closely, and firing rates reasonably well. Spike shape (height, width, threshold) stays squid-like because the channel types are not fitted. Cells with incomplete reconstructions (common for slice recordings) need an implausibly high capacitance, and the app flags this.
+
 ### Roadmap
 
 1. ✅ Core library: database access, morphometrics, simulations
 2. ✅ Web app (Streamlit): search the database, 3D viewer, run experiments interactively
-3. ⬜ Real electrophysiology: compare simulations against Allen Cell Types recordings (eFEL features) and fit models to them
+3. ✅ Real electrophysiology: compare simulations against Allen Cell Types recordings (eFEL features) and fit models to them
 4. ⬜ Deploy online
 
 <!-- Simulation Neuroscience -->

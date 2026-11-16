@@ -168,3 +168,35 @@ def histogram_figure(values: np.ndarray, xlabel: str, height: int = 300) -> go.F
     fig.update_layout(xaxis_title=xlabel, yaxis_title="count", bargap=0.05,
                       height=height, margin=dict(l=10, r=10, t=10, b=10))
     return fig
+
+
+RECORDED_COLOR = "#111827"
+MODEL_COLOR = "#d62728"
+
+
+def comparison_figure(t_rec, v_rec, t_sim, v_sim, title: str = "", height: int = 420) -> go.Figure:
+    """Recorded and simulated soma voltage on the same axes (t = 0 at stimulus onset)."""
+    fig = go.Figure()
+    fig.add_trace(go.Scattergl(x=t_rec, y=v_rec, mode="lines", name="Recorded (Allen)",
+                               line=dict(color=RECORDED_COLOR, width=1.2)))
+    fig.add_trace(go.Scattergl(x=t_sim, y=v_sim, mode="lines", name="Model",
+                               line=dict(color=MODEL_COLOR, width=1.2)))
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14)) if title else None,
+        xaxis_title="time from stimulus onset (ms)", yaxis_title="V (mV)", height=height,
+        margin=dict(l=10, r=10, t=40 if title else 10, b=10),
+        legend=dict(orientation="h", y=1.08, x=0), hovermode="x unified",
+    )
+    return fig
+
+
+def fi_comparison_figure(amps, rates_rec, rates_model=None, height: int = 360) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=np.asarray(amps) * 1000, y=rates_rec, mode="lines+markers",
+                             name="Recorded (Allen)", line=dict(color=RECORDED_COLOR)))
+    if rates_model is not None:
+        fig.add_trace(go.Scatter(x=np.asarray(amps) * 1000, y=rates_model, mode="lines+markers",
+                                 name="Model", line=dict(color=MODEL_COLOR, dash="dot")))
+    fig.update_layout(xaxis_title="injected current (pA)", yaxis_title="firing rate (Hz)", height=height,
+                      margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", y=1.1, x=0))
+    return fig

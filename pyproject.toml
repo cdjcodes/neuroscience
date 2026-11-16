@@ -1,7 +1,7 @@
 [project]
 name = "neurosim"
 version = "0.1.0"
-description = "Fetch real neurons from online databases, analyse them with NeuroM and simulate them with NEURON."
+description = "Fetch real neurons from online databases, analyse them with NeuroM, simulate them with NEURON and compare with recordings."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -9,6 +9,8 @@ dependencies = [
     "neuron>=9.0",
     "numpy>=1.26",
     "requests>=2.31",
+    "efel>=5.7",
+    "h5py>=3.12",
 ]
 
 [project.optional-dependencies]
