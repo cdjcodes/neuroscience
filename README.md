@@ -1,186 +1,147 @@
 ![](banner.png)
-<!-- PROJECT SHIELDS -->
-![Python](https://img.shields.io/badge/python-v3.10+-blue.svg)
-[![tests](https://github.com/cdjcodes/neuroscience/actions/workflows/tests.yml/badge.svg)](https://github.com/cdjcodes/neuroscience/actions/workflows/tests.yml)
+
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://neurosimlabcdj.streamlit.app/)
-![Dependencies](https://img.shields.io/badge/dependencies-up%20to%20date-brightgreen.svg)
-![Contributions welcome](https://img.shields.io/badge/contributions-welcome-orange.svg)
+[![tests](https://github.com/cdjcodes/neuroscience/actions/workflows/tests.yml/badge.svg)](https://github.com/cdjcodes/neuroscience/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/cdjcodes/neuroscience)
-![GitHub contributors](https://img.shields.io/github/contributors-anon/cdjcodes/neuroscience)
 
-Personal repository for all Neuroscience related projects. 
+# NeuroSim Lab: virtual experiments on real neurons
 
-<!-- TABLE OF CONTENTS -->
-<details open="open">
-  <summary>Contents</summary>
-  <ol>
-    <li><a href="#neurosim">neurosim: experiments on real neurons</a></li>
-    <li>
-      <a href="#sim-neuro">Simulation Neuroscience</a>
-      <ul>
-        <li><a href="#reading-neuro-data">Accessing and Reading Neuroscience Data</a></li>
-      </ul>
-      <ul>
-        <li><a href="#neuron-morph">Neuron Morphologies</a></li>
-      </ul>
-      <ul>
-        <li><a href="#ball-and-stick">Ball and Stick Model</a></li>
-      </ul>
-      <ul>
-        <li><a href="#neuron-sim">Neuron Simulations</a></li>
-      </ul>
-    </li>
-  </ol>
-</details>
+**Try it in your browser: [neurosimlabcdj.streamlit.app](https://neurosimlabcdj.streamlit.app/)**
 
+Pick a real neuron from a public database, see it in 3D, inject current into it, and compare the simulated response with what the real cell did in the lab.
 
-<!-- neurosim -->
-<a name="neurosim"></a>
-# neurosim: experiments on real neurons
+- **Real cells:** 300,000+ reconstructed neurons from [NeuroMorpho.org](https://neuromorpho.org), and 667 neurons from the [Allen Cell Types Database](https://celltypes.brain-map.org) that were both recorded with patch-clamp and reconstructed.
+- **Real simulations:** every branch of the neuron is simulated with [NEURON](https://nrn.readthedocs.io), the standard simulator in computational neuroscience.
+- **Checked against reality:** for Allen cells, the app overlays the recording on each model and compares them feature by feature.
 
-**🧠 Try it live: [neurosimlabcdj.streamlit.app](https://neurosimlabcdj.streamlit.app/)**
+This repository also contains my notebooks from EPFL's [Simulation Neuroscience](https://www.edx.org/course/simulation-neuroscience) course, which the app grew out of. See [Course notebooks](#course-notebooks).
 
-`neurosim` is a Python package that turns the course notebooks below into reusable code for running virtual experiments on **real neurons from online databases**, and checking them against **real recordings**:
+## Contents
 
-| Module | What it does | Built on |
+- [What you can do in the app](#what-you-can-do-in-the-app)
+- [Run it on your computer](#run-it-on-your-computer)
+- [Use the Python package](#use-the-python-package)
+- [How the models work](#how-the-models-work)
+- [Deploy your own copy](#deploy-your-own-copy)
+- [Course notebooks](#course-notebooks)
+- [Credits and data sources](#credits-and-data-sources)
+
+## What you can do in the app
+
+1. **Choose a neuron.** Browse Allen cells by species, brain region and dendrite type, or search NeuroMorpho.org by species, region, cell type or lab. You can also upload your own `.swc` reconstruction, or use the ball-and-stick teaching model.
+2. **Explore its shape** (*Morphology* tab). Rotate it in 3D and see its total length, branch points, Sholl analysis and branch statistics.
+3. **Run an experiment** (*Current clamp* tab). Inject a current step into the soma and watch the voltage at the soma, a dendrite tip and the axon, plus a 3D animation of the voltage spreading through the cell.
+4. **Measure its input-output curve** (*f-I curve* tab). See firing rate against injected current, and find the rheobase (the smallest current that makes it fire).
+5. **Compare with the real recording** (*Compare with recording* tab, Allen cells only). Replay any current step the Allen Institute recorded and overlay the real voltage trace with each model. The tab includes a close-up of the first spike, a table of electrophysiology features and the recorded vs. simulated f-I curves.
+
+Use the sidebar to set the stimulus and choose the membrane model:
+
+| Model | Available for | Best at |
 | --- | --- | --- |
-| `neurosim.sources` | Search [NeuroMorpho.org](https://neuromorpho.org) (300k+ reconstructed neurons) and the [Allen Cell Types Database](https://celltypes.brain-map.org) (667 neurons with both a reconstruction and patch-clamp recordings). Allen recordings are streamed sweep by sweep from the NWB files with HTTP range requests, so only the requested trace is downloaded. Everything is cached locally | NeuroMorpho & Allen REST APIs, h5py |
-| `neurosim.morphology` | Load reconstructions (repairing the common soma problems in database files), compute morphometrics, Sholl analysis, distributions, 3D geometry for plotting | [NeuroM](https://github.com/openbraininstitute/NeuroM) |
-| `neurosim.simulation` | Current-clamp experiments, f-I curves and rheobase, on the classic ball-and-stick model, a Hodgkin-Huxley multi-compartment model built from any downloaded neuron, or the Allen Institute's published biophysical model of a cell | [NEURON](https://nrn.readthedocs.io) |
-| `neurosim.channels` | Cortical ion-channel models (Na, K, Ca, Ih) from the Allen Institute's perisomatic models, pinned and reviewed in `neurosim/mechanisms/`, compiled on first use with `nrnivmodl` | NEURON + C compiler |
-| `neurosim.ephys` | Electrophysiology features (spike count, rate, latency, threshold, spike shape, adaptation, input resistance) computed identically on recorded and simulated traces | [eFEL](https://github.com/openbraininstitute/eFEL) |
-| `neurosim.fitting` | Fit a model to a recorded cell: resting potential, input resistance, membrane time constant, rheobase and f-I curve | NEURON |
+| **Allen biophysical model** | 236 Allen cells | Realistic spikes. The Allen Institute fitted it to this cell using cortical ion channels. |
+| **Hodgkin-Huxley fitted here** | Any Allen cell (one click, about 1 minute) | Resting potential, input resistance and rheobase. Spikes are too wide. |
+| **Generic Hodgkin-Huxley** | Every neuron | Exploring: every parameter has a slider. |
 
-### Quick start
+## Run it on your computer
+
+You need Python 3.10 or newer. A C compiler is needed only for the Allen biophysical models (on macOS: `xcode-select --install`).
 
 ```bash
+git clone https://github.com/cdjcodes/neuroscience.git
+cd neuroscience
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[app,dev]"
-pytest                      # add -m "not network" to skip tests that hit NeuroMorpho.org
+
+streamlit run streamlit_app.py      # opens http://localhost:8501
 ```
 
-```python
-from neurosim.sources import NeuroMorphoClient
-from neurosim import morphology, simulation as sim
-
-client = NeuroMorphoClient()
-hits = client.search(species="mouse", brain_region="neocortex", cell_type="pyramidal", size=5)
-neuron = hits.neurons[0]
-
-morph = morphology.load(client.fetch_swc(neuron))
-print(morphology.summary(morph))              # total length, branch points, ...
-
-cell = sim.MorphologyCell(morph)
-result = cell.run(sim.CurrentClamp(amp=0.3, delay=20, dur=100, tstop=150))
-print(result.firing_rate, "Hz")               # result.t, result.v["soma"], ...
-print(sim.fi_curve(cell, [0.1, 0.2, 0.4, 0.8]))
-```
-
-Compare with a real recording from the Allen Cell Types Database:
-
-```python
-from neurosim.sources import AllenCellTypesClient
-from neurosim import ephys, fitting
-
-allen = AllenCellTypesClient()
-cell = allen.get(502359001)                       # mouse V1 layer 2/3 pyramidal cell
-sweeps = allen.sweeps(cell.specimen_id)
-morph = morphology.load(allen.fetch_swc(cell))
-
-fit = fitting.fit(morph, fitting.targets_from_allen(cell, sweeps))   # ~1 min
-print(fit.achieved, fit.targets.vrest, fit.targets.ri, fit.targets.tau)
-
-sweep = next(s for s in sweeps if s.stimulus == "Long Square" and s.num_spikes > 5)
-recorded = allen.trace(cell, sweep)              # streams ~3 MB instead of the whole NWB file
-model = sim.MorphologyCell(morph, fit.bio).run(
-    sim.CurrentClamp(amp=sweep.amplitude_pa / 1000, delay=100, dur=1000, tstop=1300, dt=0.05))
-print(ephys.compare(
-    ephys.features(recorded.t, recorded.v, 0, 1000),
-    ephys.features(model.t - 100, model.v["soma"], 0, 1000),
-))
-```
-
-### Web app: NeuroSim Lab
+To run the tests:
 
 ```bash
-streamlit run streamlit_app.py
+pytest                    # full suite
+pytest -m "not network"   # skip tests that call NeuroMorpho.org and the Allen API
 ```
 
-The app opens at http://localhost:8501 and lets you:
+Downloads, compiled ion channels and model fits are cached in `~/.cache/neurosim/`.
 
-- **Compare with recording** (Allen cells): replay any recorded current step and compare the recording with every available model: the Allen Institute's published biophysical model (cortical channels; 236 cells) and a Hodgkin-Huxley model you fit in the app in about a minute. The tab shows the voltage traces, a close-up of the first action potential, an eFEL feature table and recorded vs. model f-I curves.
-- **Find a neuron**: browse Allen cells by species, dendrite type and region, or filter NeuroMorpho.org by species, brain region, cell type and lab (or type a neuron name), then click a row to load it. You can also upload your own `.swc` file or use the course's ball-and-stick model.
-- **Morphology**: an interactive 3D view, key morphometrics, Sholl analysis and branch statistics.
-- **Current clamp**: inject a current step and see the voltage at the soma, the farthest dendrite and the axon, plus an animated 3D view of the voltage spreading through the cell.
-- **f-I curve**: firing rate against injected current, and the rheobase (the smallest current that makes the cell spike).
+## Use the Python package
 
-Stimulus and membrane parameters (channel densities, leak, axial resistance, temperature, active dendrites, AIS) are in the sidebar. Results are cached, so revisiting a setting is instant.
+Everything the app does is available from Python through the `neurosim` package.
 
-### Deploying the app
+```python
+from neurosim import ephys, morphology, simulation as sim
+from neurosim.sources import AllenCellTypesClient
 
-The app runs on [Streamlit Community Cloud](https://streamlit.io/cloud) (free) and redeploys automatically on every push to `main`. To deploy your own copy:
+allen = AllenCellTypesClient()
+cell = allen.get(485909730)                        # a mouse layer-5 pyramidal neuron
+morph = morphology.load(allen.fetch_swc(cell))
+print(morphology.summary(morph))                   # total length, branch points, ...
 
-1. Sign in at [share.streamlit.io](https://share.streamlit.io) with GitHub and click **Create app → Deploy a public app from GitHub**.
-2. Repository `cdjcodes/neuroscience`, branch `main`, main file `streamlit_app.py`.
-3. Under **Advanced settings**, choose Python **3.12**, then **Deploy**.
+# Replay one of the recorded current steps on the Allen Institute's model of this cell
+sweep = next(s for s in allen.sweeps(cell.specimen_id) if s.number == 35)
+recorded = allen.trace(cell, sweep)                # streams ~3 MB, not the whole recording file
+model = sim.AllenPerisomaticCell(morph, allen.perisomatic_model(cell))
+result = model.run(sim.CurrentClamp(amp=sweep.amplitude_pa / 1000, delay=100, dur=1000, tstop=1300))
 
-Dependencies come from `requirements.txt` and settings from `.streamlit/config.toml`. Downloads and fitted models are cached on the server's disk, which is wiped whenever the app restarts, so they are rebuilt on demand. GitHub Actions runs the test suite on every push (`.github/workflows/tests.yml`).
+print(ephys.compare(
+    ephys.features(recorded.t, recorded.v, 0, 1000),
+    ephys.features(result.t - 100, result.v["soma"], 0, 1000),
+))                                                 # 17 vs 17 spikes, 1.08 vs 1.14 ms spike width, ...
+```
 
-### Model notes
+| Module | What it does |
+| --- | --- |
+| `neurosim.sources` | Search and download from NeuroMorpho.org and the Allen Cell Types Database (cells, recordings, published models). |
+| `neurosim.morphology` | Load reconstructions (repairing common file problems) and measure them with [NeuroM](https://github.com/openbraininstitute/NeuroM). |
+| `neurosim.simulation` | Build cells in NEURON and run current-clamp experiments, f-I curves and rheobase searches. |
+| `neurosim.channels` | Compile the cortical ion-channel models used by the Allen biophysical models. |
+| `neurosim.ephys` | Measure spikes and other electrophysiology features with [eFEL](https://github.com/openbraininstitute/eFEL). |
+| `neurosim.fitting` | Fit a Hodgkin-Huxley model to a recorded Allen cell. |
+| `neurosim.viz` | The Plotly figures used by the app. |
 
-**Allen biophysical models** (`simulation.AllenPerisomaticCell`): for 236 reconstructed cells, the Allen Institute published a model fitted to that cell's recordings. It has cortical channels in the soma (transient and persistent Na, Kv3.1, K_T, K_P, Im, SK, HVA/LVA Ca with Ca dynamics, Ih), passive dendrites and an axon stub, simulated at 34 °C. The app rebuilds it following Allen's recipe, using the 16 channel files pinned in `neurosim/mechanisms/allen_perisomatic` (sources, terms of use and checksums in its README). They are compiled once with `nrnivmodl`, which needs a C compiler (`packages.txt` installs one on Streamlit Cloud). Allen fitted these models to junction-potential-corrected data, so their voltages are shifted by the fit's junction potential (+14 mV) to compare with the raw recordings. On the sweeps they were fitted to, they reproduce spike count, latency and spike shape closely (e.g. 1.14 vs 1.08 ms half-width). Near threshold they can differ more.
+## How the models work
 
-**Hodgkin-Huxley models:** the multi-compartment model is generic, **not fitted to the individual cell**: Hodgkin-Huxley channels in the soma and axon, passive dendrites, and an axon initial segment (AIS) with a high Na/K density where spikes start (a synthetic AIS is added if the reconstruction has no axon). Without the AIS, the large passive dendritic tree loads the soma so heavily that squid HH channels fire one spike and then block. All parameters are in `simulation.Biophysics`.
+Every model uses the neuron's real 3D shape: each branch becomes a NEURON section with its measured lengths and diameters.
 
-**Fitting** (`neurosim.fitting`) works in two cheap stages:
-1. **Passive:** a uniform leak is fitted by bisection to the recorded input resistance and resting potential. Dendritic capacitance is fitted to the time constant, while the soma and axon keep 1 µF/cm². The extra dendritic capacitance stands in for spines, which reconstructions omit.
-2. **Active:** Na density is bisected so the model starts firing at the recorded rheobase. A small grid over K density and channel kinetic speed picks the best match to the recorded f-I curve. Squid HH channels jump straight to ~40 Hz at threshold, whereas cortical neurons can fire slowly, and slowing the kinetics fixes most of that.
+**Allen biophysical models** (`AllenPerisomaticCell`). For 236 reconstructed cells, the Allen Institute published a model fitted to that cell's recordings. It has cortical ion channels in the soma (sodium, several potassium currents, calcium and Ih), passive dendrites and a short axon stub, simulated at 34 °C. The app rebuilds each model following Allen's recipe. On the sweeps they were fitted to, these models closely reproduce the spike count, timing and spike shape. Near firing threshold they can differ more from the recording.
+- **Channel files:** the 16 channel definitions live in [`neurosim/mechanisms/allen_perisomatic`](neurosim/mechanisms/allen_perisomatic). They were reviewed and pinned, so no code is downloaded at runtime; that folder's README lists their sources and checksums. They are compiled once, on first use.
+- **Voltage offset:** Allen fitted these models to recordings corrected for the junction potential, so the app shifts their output by +14 mV to line up with the raw recordings.
 
-Fitted models match passive properties and rheobase closely, and firing rates reasonably well. Spike shape (height, width, threshold) stays squid-like because the channel types are not fitted. Cells with incomplete reconstructions (common for slice recordings) need an implausibly high capacitance, and the app flags this.
+**Hodgkin-Huxley models** (`MorphologyCell`). These use the classic squid-axon channels in the soma and axon, passive dendrites, and an axon initial segment where spikes start (a synthetic one is added if the reconstruction has no axon). They run for any neuron. Their spikes are wider and taller than real cortical spikes.
 
-### Roadmap
+**Fitting** (`neurosim.fitting`). This tunes a Hodgkin-Huxley model to an Allen cell in two stages:
+1. **Passive properties:** the leak and dendritic capacitance are fitted to the measured resting potential, input resistance and time constant. Extra dendritic capacitance stands in for spines, which reconstructions leave out.
+2. **Firing:** the sodium density is fitted so the model starts firing at the recorded rheobase. Potassium density and channel speed are then fitted to the recorded f-I curve.
 
-1. ✅ Core library: database access, morphometrics, simulations
-2. ✅ Web app (Streamlit): search the database, 3D viewer, run experiments interactively
-3. ✅ Real electrophysiology: compare simulations against Allen Cell Types recordings (eFEL features) and fit models to them
-4. ✅ Deployed online: [neurosimlabcdj.streamlit.app](https://neurosimlabcdj.streamlit.app/)
-5. ✅ Realistic spike shapes: the Allen Institute's biophysical models with cortical ion channels
+Fits match the passive properties and rheobase closely and firing rates reasonably well. The app flags cells whose reconstruction looks incomplete, because those need an implausibly high capacitance.
 
-<!-- Simulation Neuroscience -->
-# Simulation Neuroscience
+## Deploy your own copy
 
-This project contains all of the exercises and derived projects based on the MOOC Simulation Neuroscience by EPFL in edX.org. This course was designed to learn how to 
-digitally reconstruct a neuron and further expand to simulate a connection between two neurons. Neuronal simulation is important in order to better study the biological mechanisms of brain function, behaviour and disease. The course can be accessed [here](https://www.edx.org/course/simulation-neuroscience).
+The live app runs free on [Streamlit Community Cloud](https://streamlit.io/cloud) and redeploys on every push to `main`. To host your own:
 
-**Main References:**
+1. Fork this repository.
+2. At [share.streamlit.io](https://share.streamlit.io), choose **Create app → Deploy a public app from GitHub**.
+3. Select your fork, branch `main` and file `streamlit_app.py`. Under **Advanced settings**, pick Python 3.12, then click **Deploy**.
 
-Original exercises done under this project and other references used in the course can be accessed in the following links:
-1. [Blue Brain MOOC](https://github.com/BlueBrain/MOOC-neurons-and-synapses-2017)
-2. [Blue Brain Nexus](https://bluebrainnexus.io/)
-3. [Blue Brain Nexus Sandbox](https://sandbox.bluebrainnexus.io/)
-4. [Allen Cell Types Database](https://celltypes.brain-map.org/) 
-5. [AllenSDK](https://allensdk.readthedocs.io/en/latest/)
-6. [MouseLight project](https://www.janelia.org/project-team/mouselight)
-7. [NeuroM](https://github.com/openbraininstitute/NeuroM) (now maintained by the Open Brain Institute)
-8. [NEURON](https://www.neuron.yale.edu/neuron/docs)
-9. [NMODL](https://github.com/BlueBrain/nmodl)
-10. [Blue Brain Python Cell Model Management](https://github.com/BlueBrain/BluePyMM)
-11. [Blue Brain Python Optimisation Library](https://github.com/BlueBrain/BluePyOpt)
-12. [Blue Brain eFel](https://github.com/BlueBrain/eFEL)
-13. [The Blue Brain Project](https://github.com/BlueBrain)
+Python packages come from `requirements.txt`. `packages.txt` installs the C compiler the ion channels need.
 
-## Accessing and Reading Neuroscience Data
-This section contains notebooks which show how to access existing open source neuronal data such as that from the Allen Cell Type Database. This also contains information on how to organize various neuronal data  and how to create and manipulate metadata with the MINDS (Minimal Information for Neuroscience Datasets) framework using Blue Brain Nexus (data integration system). Nexus has three parts:
+## Course notebooks
 
-- Nexus Fusion : user-interface built on top of Delta to access, manage and manipulate neuronal data
-- Nexus Forge : python-based program used for building knowledge-graphs, manipulating and reusing ontologies, schema and modifying semantics of datasets
-- Nexus Delta : storage & management of knowledge graphs
+The [`Simulation Neuroscience`](Simulation%20Neuroscience) folder holds my exercises from EPFL's *Simulation Neuroscience* MOOC on edX. The course covers how to reconstruct a neuron digitally and simulate how neurons connect.
 
+| Folder | Topics |
+| --- | --- |
+| Accessing and Manipulating Neuroscience Data | Getting data from the Allen Cell Types Database; organising it and its metadata (MINDS) in Blue Brain Nexus; a content-based recommender built on the knowledge graph |
+| Neuron Morphologies | Loading, visualising and measuring neuron shapes, and statistics across neurons |
+| Ball and Stick Model | Building a neuron from a Hodgkin-Huxley soma and a dendrite; synapses, EPSPs and IPSPs; electrical synapses |
+| Neuron Simulations | Constraining models with experimental data; optimising channel conductances with BluePyOpt |
 
-## Neuron Morphologies
-This section contains exercises on how to access neuronal data from various sources, visualize, obtain features, analyze neuronal morphometrics and do statistical analysis on neuron morphologies.
+The notebooks are kept as a record of the course and may not all run today. The Blue Brain Nexus sandbox they use has gone offline, and several Blue Brain tools have since moved to the [Open Brain Institute](https://github.com/openbraininstitute) or been archived. The `neurosim` package is the maintained version of the morphology and simulation material.
 
-## Ball and Stick Model
-This section involves modeling of neurons including their electrical, synaptic and ion-channel characteristics. The baseline for this model is the ball-and-stick model whose basis is the Hodgkin-Huxley model of axonal dynamics. We build on this model to incorporate synaptic potential dynamics (Rall's Cable Model) and transmission (EPSPs and IPSPs) from a pre-synaptic neuron to post-synaptic neuron. 
-## Neuron Simulations
-This section involves exploring how to leverage experimental data to constrain the neuronal models in terms of morphology, ion channel characteristics, synaptic dynamics etc. to generate realistic digital models of different kinds of neurons.  This also shows how to optimize parameters which cannot be obtained from experimental data such as the maximum conductance of each ion channel using different tools from The Blue Brain Project. 
+## Credits and data sources
+
+- **Data:** [NeuroMorpho.org](https://neuromorpho.org); [Allen Cell Types Database](https://celltypes.brain-map.org) © Allen Institute for Brain Science, used under its [terms of use](https://alleninstitute.org/terms-of-use/).
+- **Tools:** [NEURON](https://github.com/neuronsimulator/nrn), [NeuroM](https://github.com/openbraininstitute/NeuroM), [eFEL](https://github.com/openbraininstitute/eFEL), [Streamlit](https://streamlit.io), [Plotly](https://plotly.com/python/).
+- **Course:** [Simulation Neuroscience](https://www.edx.org/course/simulation-neuroscience) (EPFL / Blue Brain Project) and its [exercise repository](https://github.com/BlueBrain/MOOC-neurons-and-synapses-2017).
+- **Further reading:** [AllenSDK](https://allensdk.readthedocs.io/en/latest/), [BluePyOpt](https://github.com/openbraininstitute/BluePyOpt), [BluePyMM](https://github.com/BlueBrain/BluePyMM), [NMODL](https://github.com/BlueBrain/nmodl) (archived), [MouseLight project](https://www.janelia.org/project-team/mouselight).
