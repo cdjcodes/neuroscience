@@ -7,8 +7,13 @@ the two can be compared like-for-like.
 from __future__ import annotations
 
 import math
+import threading
 
 import numpy as np
+
+# eFEL is a C++ library with global state (settings, current trace) and is not
+# thread-safe; web servers such as Streamlit run sessions in parallel threads.
+_EFEL_LOCK = threading.Lock()
 
 # eFEL feature -> (label, unit); per-spike features are averaged
 FEATURES: dict[str, tuple[str, str]] = {
@@ -56,7 +61,8 @@ def features(
         trace["stimulus_current"] = [amp_na]
     else:
         names = [n for n in names if n != "ohmic_input_resistance_vb_ssse"]
-    raw = efel.get_feature_values([trace], names, raise_warnings=False)[0]
+    with _EFEL_LOCK:
+        raw = efel.get_feature_values([trace], names, raise_warnings=False)[0]
     out = {}
     for n in names:
         val = raw.get(n)

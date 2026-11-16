@@ -56,3 +56,16 @@ def test_full_fit_matches_rheobase_and_roundtrips(simple_swc):
     assert res.fi_rates_model[:2].tolist() == [0.0, 0.0]
     back = fitting.from_dict(fitting.to_dict(res))
     assert back.bio == res.bio and np.allclose(back.fi_rates_model, res.fi_rates_model)
+
+
+def test_features_are_thread_safe(simple_swc):
+    """Concurrent feature extraction (as in a multi-user web app) gives identical results."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    res = MorphologyCell(mo.load(simple_swc)).run(CurrentClamp(amp=0.3, delay=50, dur=200, tstop=300))
+    expected = ephys.features(res.t, res.v["soma"], 50, 250)
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(lambda _: ephys.features(res.t, res.v["soma"], 50, 250), range(32)))
+    for r in results:
+        assert r["Spikecount"] == expected["Spikecount"]
+        assert r["spike_half_width"] == pytest.approx(expected["spike_half_width"], nan_ok=True)
