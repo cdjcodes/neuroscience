@@ -69,6 +69,21 @@ print(result.firing_rate, "Hz")               # result.t, result.v["soma"], ...
 print(sim.fi_curve(cell, [0.1, 0.2, 0.4, 0.8]))
 ```
 
+### Web app: NeuroSim Lab
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The app opens at http://localhost:8501 and lets you:
+
+- **Find a neuron**: filter NeuroMorpho.org by species, brain region, cell type and lab (or type a neuron name), then click a row to load it. You can also upload your own `.swc` file or use the course's ball-and-stick model.
+- **Morphology**: an interactive 3D view, key morphometrics, Sholl analysis and branch statistics.
+- **Current clamp**: inject a current step and see the voltage at the soma, the farthest dendrite and the axon, plus an animated 3D view of the voltage spreading through the cell.
+- **f-I curve**: firing rate against injected current, and the rheobase (the smallest current that makes the cell spike).
+
+Stimulus and membrane parameters (channel densities, leak, axial resistance, temperature, active dendrites, AIS) are in the sidebar. Results are cached, so revisiting a setting is instant.
+
 ### Model notes
 
 The multi-compartment model is generic, **not fitted to the individual cell**: Hodgkin-Huxley channels in the soma and axon, passive dendrites, and an axon initial segment (AIS) with a high Na/K density where spikes start (a synthetic AIS is added if the reconstruction has no axon). Without the AIS, the large passive dendritic tree loads the soma so heavily that squid HH channels fire one spike and then block. All parameters are in `simulation.Biophysics`.
@@ -76,7 +91,7 @@ The multi-compartment model is generic, **not fitted to the individual cell**: H
 ### Roadmap
 
 1. ✅ Core library: database access, morphometrics, simulations
-2. ⬜ Web app (Streamlit): search the database, 3D viewer, run experiments interactively
+2. ✅ Web app (Streamlit): search the database, 3D viewer, run experiments interactively
 3. ⬜ Real electrophysiology: compare simulations against Allen Cell Types recordings (eFEL features) and fit models to them
 4. ⬜ Deploy online
 
