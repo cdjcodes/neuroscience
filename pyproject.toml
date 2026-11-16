@@ -1,0 +1,26 @@
+[project]
+name = "neurosim"
+version = "0.1.0"
+description = "Fetch real neurons from online databases, analyse them with NeuroM and simulate them with NEURON."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "neurom>=4.0",
+    "neuron>=9.0",
+    "numpy>=1.26",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+app = ["streamlit>=1.40", "plotly>=5.20"]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["neurosim*"]
+
+[tool.pytest.ini_options]
+markers = ["network: test needs internet access to an online database"]
